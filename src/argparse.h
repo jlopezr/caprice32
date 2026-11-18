@@ -15,6 +15,9 @@ class CapriceArgs
       size_t binOffset;
       std::map<std::string, std::map<std::string, std::string>> cfgOverrides;
       std::string symFilePath;
+      std::string traceDir;
+      int64_t traceFrame = -1;
+      bool traceExit = false;
 };
 
 std::string replaceCap32Keys(std::string command);

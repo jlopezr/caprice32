@@ -21,6 +21,9 @@ const struct option long_options[] =
    {"offset", required_argument, nullptr, 'o'},
    {"override", required_argument, nullptr, 'O'},
    {"sym_file", required_argument, nullptr, 's'},
+   {"trace_dir", required_argument, nullptr, 'T'},
+   {"trace_frame", required_argument, nullptr, 'F'},
+   {"trace_exit", no_argument, nullptr, 'E'},
    {"version",  no_argument, nullptr, 'V'},
    {"help",     no_argument, nullptr, 'h'},
    {"verbose",  no_argument, nullptr, 'v'},
@@ -42,6 +45,9 @@ void usage(std::ostream &os, char *progPath, int errcode)
    os << "   -o/--offset=<address>:  offset at which to inject the binary provided with -i (default: 0x6000)\n";
    os << "   -O/--override:          override an option from the config. Can be repeated. (example: -O system.model=3)\n";
    os << "   -s/--sym_file=<file>:   use <file> as a source of symbols and entry points for disassembling in developers' tools.\n";
+   os << "   -T/--trace_dir=<dir>:    save an instrumented capture in <dir> at --trace_frame.\n";
+   os << "   -F/--trace_frame=<n>:    frame at which to save the instrumented capture (starts at 1).\n";
+   os << "   -E/--trace_exit:         exit after the instrumented capture.\n";
    os << "   -V/--version:           outputs version and exit\n";
    os << "   -v/--verbose:           be talkative\n";
    os << "\nslotfiles is an optional list of files giving the content of the various CPC ports.\n";
@@ -102,7 +108,7 @@ void parseArguments(int argc, char **argv, std::vector<std::string>& slot_list, 
 
    optind = 0; // To please test framework, when this function is called multiple times !
    while(true) {
-      c = getopt_long (argc, argv, "a:c:hi:o:O:s:vV",
+      c = getopt_long (argc, argv, "a:c:hi:o:O:s:T:F:EvV",
                        long_options, &option_index);
       // Logs before processing of the -v will not be visible.
       LOG_DEBUG("Next option: " << c << "(" << static_cast<char>(c) << ")");
@@ -162,6 +168,18 @@ void parseArguments(int argc, char **argv, std::vector<std::string>& slot_list, 
             args.symFilePath = optarg;
             break;
 
+         case 'T':
+            args.traceDir = optarg;
+            break;
+
+         case 'F':
+            args.traceFrame = std::stoll(optarg, nullptr, 0);
+            break;
+
+         case 'E':
+            args.traceExit = true;
+            break;
+
          case 'v':
             log_verbose = true;
             break;
@@ -208,5 +226,13 @@ void parseArguments(int argc, char **argv, std::vector<std::string>& slot_list, 
 
    /* All remaining command line arguments will go to the slot content list */
    slot_list.assign(argv+optind, argv+argc);
+   if (args.traceFrame >= 0 && args.traceDir.empty()) {
+      LOG_ERROR("--trace_frame requires --trace_dir");
+      usage(std::cerr, argv[0], 1);
+   }
+   if (args.traceFrame == 0) {
+      LOG_ERROR("--trace_frame must be at least 1");
+      usage(std::cerr, argv[0], 1);
+   }
    LOG_DEBUG("slot_list: " << stringutils::join(slot_list, ","))
 }

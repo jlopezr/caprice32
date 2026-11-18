@@ -20,6 +20,8 @@
 #include <iostream>
 #include <sstream>
 #include <chrono>
+#include <fstream>
+#include <iomanip>
 #include <string>
 #include <thread>
 #include <filesystem>
@@ -2200,6 +2202,72 @@ void dumpScreen() {
    }
 }
 
+/* A stable, intentionally small capture format for external asset tools.
+   snapshot.sna retains the complete machine state; the other files avoid
+   requiring a snapshot parser just to inspect RAM, the Plus sprite RAM or
+   the active palette. */
+bool dumpTrace(const CapriceArgs& args, dword frame) {
+   std::ostringstream name;
+   name << "frame-" << std::setw(6) << std::setfill('0') << frame;
+   const std::filesystem::path output = std::filesystem::path(args.traceDir) / name.str();
+
+   try {
+      std::filesystem::create_directories(output);
+   } catch (const std::filesystem::filesystem_error& error) {
+      LOG_ERROR("Unable to create trace directory " << output << ": " << error.what());
+      return false;
+   }
+
+   const std::filesystem::path screen = output / "screen.png";
+   if (SDL_SavePNG(back_surface, screen.string())) {
+      LOG_ERROR("Could not write trace screenshot " << screen);
+      return false;
+   }
+   if (snapshot_save((output / "snapshot.sna").string())) {
+      LOG_ERROR("Could not write trace snapshot in " << output);
+      return false;
+   }
+
+   std::ofstream ram(output / "ram.bin", std::ios::binary);
+   ram.write(reinterpret_cast<const char*>(pbRAM), CPC.ram_size * 1024);
+   std::ofstream sprites(output / "asic-sprites.bin", std::ios::binary);
+   sprites.write(reinterpret_cast<const char*>(asic.sprites), sizeof(asic.sprites));
+   if (!ram || !sprites) {
+      LOG_ERROR("Could not write trace RAM or ASIC sprites in " << output);
+      return false;
+   }
+
+   std::ofstream manifest(output / "manifest.json");
+   manifest << "{\n"
+            << "  \"format\": \"caprice32-trace-v1\",\n"
+            << "  \"frame\": " << frame << ",\n"
+            << "  \"model\": " << CPC.model << ",\n"
+            << "  \"ram_bytes\": " << CPC.ram_size * 1024 << ",\n"
+            << "  \"ram_bank\": " << static_cast<unsigned int>(GateArray.RAM_bank) << ",\n"
+            << "  \"ram_config\": " << static_cast<unsigned int>(GateArray.RAM_config) << ",\n"
+            << "  \"sprite_format\": \"16 sprites, 16x16, one byte per palette index\",\n"
+            << "  \"palette\": [";
+   for (int i = 0; i < 17; ++i) {
+      if (i) manifest << ", ";
+      manifest << GateArray.palette[i];
+   }
+   manifest << "],\n  \"sprites\": [\n";
+   for (int i = 0; i < 16; ++i) {
+      manifest << "    {\"x\":" << asic.sprites_x[i]
+               << ",\"y\":" << asic.sprites_y[i]
+               << ",\"magnify_x\":" << asic.sprites_mag_x[i]
+               << ",\"magnify_y\":" << asic.sprites_mag_y[i] << "}";
+      manifest << (i == 15 ? "\n" : ",\n");
+   }
+   manifest << "  ]\n}\n";
+   if (!manifest) {
+      LOG_ERROR("Could not write trace manifest in " << output);
+      return false;
+   }
+   LOG_INFO("Wrote trace capture to " << output);
+   return true;
+}
+
 // Very similar to screenshot, but difficult to factorize :-)
 void dumpSnapshot() {
    std::string dir = CPC.snap_path;
@@ -2773,6 +2841,7 @@ int cap32_main (int argc, char **argv)
 {
    int iExitCondition;
    bool take_screenshot = false;
+   bool trace_captured = false;
    bool bin_loaded = false;
    SDL_Event event;
    std::vector<std::string> slot_list;
@@ -3330,6 +3399,10 @@ int cap32_main (int argc, char **argv)
             if (take_screenshot) {
               dumpScreen();
               take_screenshot = false;
+            }
+            if (!trace_captured && args.traceFrame == static_cast<int64_t>(dwFrameCountOverall)) {
+              trace_captured = dumpTrace(args, dwFrameCountOverall);
+              if (trace_captured && args.traceExit) return 0;
             }
          }
       }
